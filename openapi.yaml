@@ -1,0 +1,463 @@
+openapi: "3.1.0"
+info:
+  title: Attendance Control API
+  version: "0.1.0"
+  description: |
+    PIN-based attendance clock-in/out system for medical clinics.
+    Supports offline sync, overtime configuration, and export.
+
+servers:
+  - url: http://localhost:3000
+    description: Local development
+  - url: https://attendance.vercel.app
+    description: Production
+
+paths:
+  /api/auth/verify-pin:
+    post:
+      summary: Verify employee PIN
+      description: Authenticate with 4-6 digit PIN and receive session tokens
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pin]
+              properties:
+                pin:
+                  type: string
+                  minLength: 4
+                  maxLength: 6
+                  pattern: "^\\d{4,6}$"
+                  description: Employee PIN
+      responses:
+        "200":
+          description: Authentication successful
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                description: session_token, clock_token, refresh_token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  employeeId:
+                    type: string
+                    format: uuid
+                  name:
+                    type: string
+                  role:
+                    type: string
+                    enum: [employee, supervisor, admin]
+                  sessionToken:
+                    type: string
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/clock/record:
+    post:
+      summary: Record clock action
+      description: Record clock_in, pause_start, pause_end, or clock_out
+      tags: [Clock]
+      security:
+        - ClockToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [employeeId, type, deviceTs]
+              properties:
+                employeeId:
+                  type: string
+                  format: uuid
+                type:
+                  type: string
+                  enum: [clock_in, pause_start, pause_end, clock_out]
+                deviceTs:
+                  type: string
+                  format: date-time
+      responses:
+        "201":
+          description: Entry created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  type:
+                    type: string
+                  serverTs:
+                    type: string
+                    format: date-time
+                  status:
+                    type: string
+                    enum: [ok, conflict, error]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/shifts:
+    get:
+      summary: List shifts
+      tags: [Shifts]
+      security:
+        - SessionToken: [admin, supervisor]
+      responses:
+        "200":
+          description: List of shift templates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Shift"
+    post:
+      summary: Create shift
+      tags: [Shifts]
+      security:
+        - SessionToken: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShiftInput"
+      responses:
+        "201":
+          description: Shift created
+
+  /api/shifts/{id}:
+    get:
+      summary: Get shift by ID
+      tags: [Shifts]
+      security:
+        - SessionToken: [admin, supervisor]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Shift details
+    put:
+      summary: Update shift
+      tags: [Shifts]
+      security:
+        - SessionToken: [admin]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Shift updated
+    delete:
+      summary: Delete shift
+      tags: [Shifts]
+      security:
+        - SessionToken: [admin]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Shift deleted
+
+  /api/overtime/config:
+    get:
+      summary: Get overtime configuration
+      tags: [Overtime]
+      security:
+        - SessionToken: [admin, supervisor]
+      responses:
+        "200":
+          description: Overtime configuration
+    post:
+      summary: Upsert overtime configuration
+      tags: [Overtime]
+      security:
+        - SessionToken: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OvertimeConfig"
+      responses:
+        "200":
+          description: Configuration saved
+
+  /api/sync:
+    post:
+      summary: Sync offline entries
+      description: Accept batch of pending time entries and store with server timestamps
+      tags: [Sync]
+      security:
+        - SessionToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entries]
+              properties:
+                entries:
+                  type: array
+                  maxItems: 100
+                  items:
+                    $ref: "#/components/schemas/SyncEntry"
+      responses:
+        "200":
+          description: Entries synced
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  batchId:
+                    type: string
+                    format: uuid
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        deviceTs:
+                          type: string
+                        serverTs:
+                          type: string
+                        status:
+                          type: string
+                          enum: [ok, conflict]
+
+  /api/employees:
+    get:
+      summary: List employees
+      tags: [Employees]
+      security:
+        - SessionToken: [admin, supervisor]
+      responses:
+        "200":
+          description: List of employees
+
+  /api/employees/{id}:
+    patch:
+      summary: Update employee
+      tags: [Employees]
+      security:
+        - SessionToken: [admin]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Employee updated
+
+  /api/reports/export:
+    post:
+      summary: Export attendance report
+      tags: [Reports]
+      security:
+        - SessionToken: [admin, supervisor]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                format:
+                  type: string
+                  enum: [csv, xlsx, pdf]
+                  default: csv
+                dateRange:
+                  type: object
+                  properties:
+                    start:
+                      type: string
+                      format: date
+                    end:
+                      type: string
+                      format: date
+      responses:
+        "200":
+          description: Export data
+
+components:
+  securitySchemes:
+    SessionToken:
+      type: http
+      scheme: bearer
+      description: JWT session token (30min expiry)
+    ClockToken:
+      type: http
+      scheme: bearer
+      description: JWT clock token (5min expiry)
+
+  schemas:
+    Shift:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        startTime:
+          type: string
+          example: "09:00"
+        endTime:
+          type: string
+          example: "17:00"
+        breakStart:
+          type: string
+          nullable: true
+        breakEnd:
+          type: string
+          nullable: true
+        monday:
+          type: boolean
+        tuesday:
+          type: boolean
+        wednesday:
+          type: boolean
+        thursday:
+          type: boolean
+        friday:
+          type: boolean
+        saturday:
+          type: boolean
+        sunday:
+          type: boolean
+
+    ShiftInput:
+      type: object
+      required: [name, startTime, endTime]
+      properties:
+        name:
+          type: string
+        startTime:
+          type: string
+        endTime:
+          type: string
+        breakStart:
+          type: string
+          nullable: true
+        breakEnd:
+          type: string
+          nullable: true
+        monday:
+          type: boolean
+          default: true
+        tuesday:
+          type: boolean
+          default: true
+        wednesday:
+          type: boolean
+          default: true
+        thursday:
+          type: boolean
+          default: true
+        friday:
+          type: boolean
+          default: true
+        saturday:
+          type: boolean
+          default: false
+        sunday:
+          type: boolean
+          default: false
+
+    OvertimeConfig:
+      type: object
+      properties:
+        dailyThresholdMinutes:
+          type: integer
+          default: 480
+        weeklyThresholdMinutes:
+          type: integer
+          default: 2880
+        roundingMinutes:
+          type: integer
+          default: 15
+        roundingStrategy:
+          type: string
+          enum: [nearest, up, down]
+          default: nearest
+        multiplier1_25xMinutes:
+          type: integer
+          default: 480
+        multiplier1_5xHours:
+          type: integer
+          default: 0
+        multiplier2xWeekends:
+          type: boolean
+          default: false
+
+    SyncEntry:
+      type: object
+      required: [employeeId, type, deviceTs]
+      properties:
+        id:
+          type: string
+          format: uuid
+        employeeId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [clock_in, pause_start, pause_end, clock_out]
+        deviceTs:
+          type: string
+          format: date-time
+        syncBatchId:
+          type: string
+
+  responses:
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+              details:
+                type: object
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string

@@ -1,0 +1,51 @@
+artifact_store: openspec
+delivery_strategy: single-pr-default
+review_budget_lines: 400
+execution_mode: interactive
+project: control-asistencia
+
+strict_tdd: false
+
+context:
+  - Project root is empty of source code and framework config.
+  - No package.json, tsconfig.json, next.config, vite.config, or tailwind.config found.
+  - No database, auth, CI, lint, test, or formatter configuration detected.
+  - Stack must be defined before implementation can begin.
+  - OpenSpec artifacts are stored under openspec/.
+
+phase_rules:
+  propose: required
+  spec: required
+  design: required
+  tasks: required
+  apply: required
+  verify: required
+  archive: required
+
+testing:
+  runner: null
+  runner_command: null
+  frameworks: []
+  layers:
+    unit:
+      available: false
+      tool: null
+    integration:
+      available: false
+      tool: null
+    e2e:
+      available: false
+      tool: null
+  coverage:
+    available: false
+    command: null
+  quality_tools:
+    linter:
+      available: false
+      command: null
+    type_checker:
+      available: false
+      command: null
+    formatter:
+      available: false
+      command: null
