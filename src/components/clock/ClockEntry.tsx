@@ -5,19 +5,21 @@ import { useClockStore } from "@/lib/stores/clockStore";
 import { useAuthStore } from "@/lib/stores/authStore";
 import { addPendingEntry } from "@/lib/offline/dexie";
 import { syncManager } from "@/lib/offline/syncManager";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { WelcomeScreen } from "./WelcomeScreen";
+import { PinKeyboard } from "./PinKeyboard";
+import { ClockDashboard } from "./ClockDashboard";
+
+type ViewMode = "welcome" | "pin_entry" | "clock_action";
 
 export function ClockEntry() {
-  const [pin, setPin] = useState("");
-  const [pinError, setPinError] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("welcome");
+  const [pinError, setPinError] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [isOnline, setIsOnline] = useState(true);
 
-  const { status, isLoading, clockInTime, breakStartTime, error, clockIn, startBreak, endBreak, clockOut, setLoading, setError } = useClockStore();
-  const { isAuthenticated, employeeId, name, role, login, logout } = useAuthStore();
+  const { isLoading, clockIn, startBreak, endBreak, clockOut, setLoading, setError } = useClockStore();
+  const { isAuthenticated, employeeId, login, logout } = useAuthStore();
 
   // Track online status
   useEffect(() => {
@@ -43,12 +45,19 @@ export function ClockEntry() {
     return () => clearInterval(interval);
   }, []);
 
-  const handlePINSubmit = useCallback(async () => {
-    if (pin.length < 4 || pin.length > 6 || !/^\d+$/.test(pin)) {
-      setPinError("PIN must be 4-6 digits");
+  // Update view mode based on authentication state
+  useEffect(() => {
+    if (isAuthenticated) {
+      setViewMode("clock_action");
+    }
+  }, [isAuthenticated]);
+
+  const handlePINComplete = useCallback(async (pin: string) => {
+    if (pin.length !== 4 || !/^\d+$/.test(pin)) {
+      setPinError(true);
       return;
     }
-    setPinError(null);
+    setPinError(false);
     setLoading(true);
 
     try {
@@ -65,12 +74,11 @@ export function ClockEntry() {
 
       const data = await res.json();
       login(data.employeeId, data.name, data.role);
-      setPin("");
-    } catch (err) {
-      setPinError(err instanceof Error ? err.message : "Authentication failed");
+    } catch {
+      setPinError(true);
       setLoading(false);
     }
-  }, [pin, login, setLoading]);
+  }, [login, setLoading]);
 
   const queueOfflineAction = useCallback(
     async (empId: string, action: string, ts: string) => {
@@ -128,155 +136,81 @@ export function ClockEntry() {
     [employeeId, clockIn, startBreak, endBreak, clockOut, setLoading, setError, queueOfflineAction],
   );
 
-  // PIN login screen
-  if (!isAuthenticated) {
+  const handleLogout = useCallback(() => {
+    logout();
+    useClockStore.getState().reset();
+    setViewMode("welcome");
+  }, [logout]);
+
+  // Welcome Screen
+  if (viewMode === "welcome" && !isAuthenticated) {
+    return <WelcomeScreen onContinue={() => setViewMode("pin_entry")} />;
+  }
+
+  // PIN Entry Screen
+  if (viewMode === "pin_entry" && !isAuthenticated) {
     return (
-      <Card className="mx-auto max-w-sm">
-        <CardHeader>
-          <CardTitle>Clock In</CardTitle>
-          <CardDescription>Enter your PIN to start</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <Input
-              type="password"
-              inputMode="numeric"
-              placeholder="4-6 digit PIN"
-              maxLength={6}
-              value={pin}
-              onChange={(e) => {
-                setPin(e.target.value.replace(/\D/g, ""));
-                setPinError(null);
-              }}
-              onKeyDown={(e) => e.key === "Enter" && handlePINSubmit()}
-              autoFocus
-              className="text-center text-2xl tracking-widest"
-            />
-            {pinError && <p className="mt-1 text-sm text-destructive">{pinError}</p>}
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-100 flex flex-col items-center justify-center p-4">
+        <div className="w-full max-w-sm space-y-8">
+          {/* Header */}
+          <div className="text-center space-y-2">
+            <h1 className="text-2xl font-bold text-gray-900">Ingresá tu PIN</h1>
+            <p className="text-gray-500">4 dígitos para registrar tu asistencia</p>
           </div>
-          <Button
-            onClick={handlePINSubmit}
-            disabled={isLoading || pin.length < 4}
-            className="w-full"
-            size="lg"
-          >
-            {isLoading ? "Verifying..." : "Verify PIN"}
-          </Button>
+
+          {/* PIN Keyboard */}
+          <PinKeyboard
+            length={4}
+            onComplete={handlePINComplete}
+            disabled={isLoading}
+            error={pinError}
+          />
+
+          {/* Error Message */}
+          {pinError && (
+            <div className="text-center">
+              <p className="text-red-500 text-sm">PIN inválido. Intente nuevamente.</p>
+            </div>
+          )}
+
+          {/* Offline Badge */}
           {!isOnline && (
             <Badge variant="warning" className="w-full justify-center">
-              Offline Mode — Actions will sync when online
+              Modo Offline — Las acciones se sincronizarán cuando haya conexión
             </Badge>
           )}
-        </CardContent>
-      </Card>
+
+          {/* Back Button */}
+          <button
+            onClick={() => setViewMode("welcome")}
+            className="w-full py-3 text-gray-500 hover:text-gray-700 transition-colors"
+          >
+            ← Volver
+          </button>
+        </div>
+      </div>
     );
   }
 
-  // Clock action screen
-  return (
-    <Card className="mx-auto max-w-sm">
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle>Hello, {name}</CardTitle>
-          <div className="flex items-center gap-2">
+  // Clock Action Screen
+  if (isAuthenticated) {
+    return (
+      <div className="relative">
+        {/* Offline/Pending Indicators */}
+        {(!isOnline || pendingCount > 0) && (
+          <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
             {!isOnline && <Badge variant="warning">Offline</Badge>}
             {pendingCount > 0 && (
               <Badge variant="outline">{pendingCount} pending</Badge>
             )}
           </div>
-        </div>
-        <CardDescription>
-          Role: {role}
-          {!isOnline && " — Offline mode"}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {status === "idle" && (
-          <Button
-            onClick={() => performClockAction("clock_in")}
-            disabled={isLoading}
-            className="w-full"
-            size="lg"
-          >
-            {isLoading ? "Processing..." : "Clock In"}
-          </Button>
         )}
 
-        {status === "clocked_in" && (
-          <div className="space-y-3">
-            <div className="rounded-lg bg-green-50 p-4 text-center text-green-700">
-              <p className="text-lg font-semibold">Clocked In</p>
-              {clockInTime && (
-                <p className="text-sm">{new Date(clockInTime).toLocaleTimeString()}</p>
-              )}
-            </div>
-            <Button
-              onClick={() => performClockAction("pause_start")}
-              disabled={isLoading}
-              variant="secondary"
-              className="w-full"
-            >
-              {isLoading ? "Processing..." : "Start Break"}
-            </Button>
-            <Button
-              onClick={() => performClockAction("clock_out")}
-              disabled={isLoading}
-              variant="destructive"
-              className="w-full"
-            >
-              {isLoading ? "Processing..." : "Clock Out"}
-            </Button>
-          </div>
-        )}
+        <ClockDashboard onClockAction={performClockAction} onLogout={handleLogout} />
+      </div>
+    );
+  }
 
-        {status === "on_break" && (
-          <div className="space-y-3">
-            <div className="rounded-lg bg-yellow-50 p-4 text-center text-yellow-700">
-              <p className="text-lg font-semibold">On Break</p>
-              {breakStartTime && (
-                <p className="text-sm">Since {new Date(breakStartTime).toLocaleTimeString()}</p>
-              )}
-            </div>
-            <Button
-              onClick={() => performClockAction("pause_end")}
-              disabled={isLoading}
-              variant="secondary"
-              className="w-full"
-            >
-              {isLoading ? "Processing..." : "Resume"}
-            </Button>
-          </div>
-        )}
-
-        {status === "clocked_out" && (
-          <div className="space-y-3">
-            <div className="rounded-lg bg-gray-50 p-4 text-center text-gray-700">
-              <p className="text-lg font-semibold">Session Complete</p>
-              <p className="text-sm">You have clocked out</p>
-            </div>
-            <Button
-              onClick={() => performClockAction("clock_in")}
-              disabled={isLoading}
-              className="w-full"
-            >
-              {isLoading ? "Processing..." : "Clock In Again"}
-            </Button>
-          </div>
-        )}
-
-        {error && <p className="text-sm text-destructive">{error}</p>}
-
-        <Button
-          onClick={() => {
-            logout();
-            useClockStore.getState().reset();
-          }}
-          variant="ghost"
-          className="w-full"
-        >
-          Logout
-        </Button>
-      </CardContent>
-    </Card>
-  );
+  // Fallback - should not reach here
+  return null;
 }

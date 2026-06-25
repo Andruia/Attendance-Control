@@ -65,3 +65,38 @@ export async function PATCH(
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const auth = await authenticateRequest(request, ["admin"]);
+  if (auth) return auth;
+
+  try {
+    const { id } = await params;
+
+    // Prevent deleting yourself
+    const requestingEmployeeId = request.headers.get("x-employee-id");
+    if (requestingEmployeeId === id) {
+      return NextResponse.json(
+        { error: "No puedes eliminar tu propia cuenta" },
+        { status: 400 },
+      );
+    }
+
+    const [deleted] = await db
+      .delete(schema.employees)
+      .where(eq(schema.employees.id, id))
+      .returning({ id: schema.employees.id });
+
+    if (!deleted) {
+      return NextResponse.json({ error: "Employee not found" }, { status: 404 });
+    }
+
+    return NextResponse.json({ status: "deleted" }, { status: 200 });
+  } catch (error) {
+    console.error("Delete employee error:", error);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}

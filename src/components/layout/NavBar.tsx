@@ -10,23 +10,23 @@ import { useEffect, useState } from "react";
 import { syncManager } from "@/lib/offline/syncManager";
 
 const employeeLinks = [
-  { href: "/clock", label: "Clock" },
-  { href: "/history", label: "History" },
+  { href: "/clock", label: "Fichar" },
+  { href: "/history", label: "Historial" },
 ];
 
 const supervisorLinks = [
-  { href: "/clock", label: "Clock" },
-  { href: "/history", label: "History" },
-  { href: "/team", label: "Team" },
+  { href: "/clock", label: "Fichar" },
+  { href: "/history", label: "Historial" },
+  { href: "/team", label: "Equipo" },
 ];
 
 const adminLinks = [
-  { href: "/clock", label: "Clock" },
-  { href: "/history", label: "History" },
-  { href: "/team", label: "Team" },
-  { href: "/settings", label: "Settings" },
-  { href: "/users", label: "Users" },
-  { href: "/reports", label: "Reports" },
+  { href: "/clock", label: "Fichar" },
+  { href: "/history", label: "Historial" },
+  { href: "/team", label: "Equipo" },
+  { href: "/settings", label: "Config" },
+  { href: "/users", label: "Usuarios" },
+  { href: "/reports", label: "Reportes" },
 ];
 
 export function NavBar() {
@@ -76,7 +76,7 @@ export function NavBar() {
           <span className="text-sm text-muted-foreground">{name}</span>
 
           <Button onClick={logout} variant="ghost" size="sm">
-            Logout
+            Salir
           </Button>
         </div>
       </div>

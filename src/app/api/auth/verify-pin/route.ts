@@ -6,7 +6,7 @@ import { issueSessionToken, issueClockToken, issueRefreshToken } from "@/infrast
 import { z } from "zod";
 
 const verifyPinSchema = z.object({
-  pin: z.string().min(4).max(6).regex(/^\d{4,6}$/, "PIN must be 4-6 digits"),
+  pin: z.string().min(4).max(4).regex(/^\d{4}$/, "PIN must be exactly 4 digits"),
 });
 
 export async function POST(request: NextRequest) {
@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
 
     if (!parsed.success) {
       return NextResponse.json(
-        { error: "PIN must be 4-6 digits", details: parsed.error.flatten() },
+        { error: "PIN must be exactly 4 digits", details: parsed.error.flatten() },
         { status: 400 },
       );
     }

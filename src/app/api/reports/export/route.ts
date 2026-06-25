@@ -3,6 +3,8 @@ import type { NextRequest } from "next/server";
 import { eq, and, gte, lte } from "drizzle-orm";
 import { db, schema } from "@/infrastructure/db";
 import { authenticateRequest } from "@/infrastructure/auth/middleware";
+import { calculateOvertime } from "@/domain/overtime/calculator";
+import type { OvertimeConfig, TimeEntryBatch } from "@/domain/overtime/config";
 import { z } from "zod";
 
 const exportRequestSchema = z.object({
@@ -15,6 +17,17 @@ const exportRequestSchema = z.object({
   departmentFilter: z.string().optional(),
   statusFilter: z.string().optional(),
 });
+
+/** Default overtime config when no company config exists */
+const DEFAULT_OVERTIME_CONFIG: OvertimeConfig = {
+  dailyThresholdMinutes: 480,
+  weeklyThresholdMinutes: 2880,
+  roundingMinutes: 15,
+  roundingStrategy: "nearest",
+  multiplier1_25xMinutes: 480,
+  multiplier1_5xHours: 0,
+  multiplier2xWeekends: false,
+};
 
 export async function POST(request: NextRequest) {
   const auth = await authenticateRequest(request, ["admin", "supervisor"]);
@@ -52,7 +65,6 @@ export async function POST(request: NextRequest) {
         employeeId: schema.timeEntries.employeeId,
         type: schema.timeEntries.type,
         deviceTs: schema.timeEntries.deviceTs,
-        serverTs: schema.timeEntries.serverTs,
         employeeName: schema.employees.name,
         employeeEmail: schema.employees.email,
         departmentId: schema.employees.departmentId,
@@ -62,19 +74,160 @@ export async function POST(request: NextRequest) {
       .where(and(...conditions))
       .orderBy(schema.timeEntries.deviceTs);
 
-    // Transform to export rows (group by employee/date)
-    const rows = entries.map((entry) => ({
-      date: entry.deviceTs.toISOString().slice(0, 10),
-      employeeName: entry.employeeName ?? "Unknown",
-      employeeEmail: entry.employeeEmail ?? "",
-      department: entry.departmentId ?? "",
-      clockIn: entry.type === "clock_in" ? entry.deviceTs.toISOString() : "",
-      clockOut: entry.type === "clock_out" ? entry.deviceTs.toISOString() : "",
-      breakDuration: "",
-      totalHours: "",
-      overtimeHours: "",
-      status: entry.type,
-    }));
+    // Fetch overtime config (company-level)
+    const companyId = request.headers.get("x-company-id");
+    let overtimeConfig = DEFAULT_OVERTIME_CONFIG;
+    if (companyId) {
+      const [config] = await db
+        .select()
+        .from(schema.overtimeConfigs)
+        .where(eq(schema.overtimeConfigs.companyId, companyId))
+        .limit(1);
+      if (config) {
+        overtimeConfig = {
+          dailyThresholdMinutes: config.dailyThresholdMinutes,
+          weeklyThresholdMinutes: config.weeklyThresholdMinutes,
+          roundingMinutes: config.roundingMinutes,
+          roundingStrategy: config.roundingStrategy as OvertimeConfig["roundingStrategy"],
+          multiplier1_25xMinutes: config.multiplier1_25xMinutes,
+          multiplier1_5xHours: config.multiplier1_5xHours,
+          multiplier2xWeekends: config.multiplier2xWeekends,
+        };
+      }
+    }
+
+    // Group entries by employee + date
+    type EntryGroup = {
+      employeeId: string;
+      employeeName: string;
+      employeeEmail: string;
+      departmentId: string;
+      date: string;
+      clockIn: Date | null;
+      clockOut: Date | null;
+      pauses: Array<{ start: Date; end: Date }>;
+    };
+
+    const groups: Record<string, EntryGroup> = {};
+
+    for (const entry of entries) {
+      const dateKey = entry.deviceTs.toISOString().slice(0, 10);
+      const groupKey = `${entry.employeeId}_${dateKey}`;
+
+      if (!groups[groupKey]) {
+        groups[groupKey] = {
+          employeeId: entry.employeeId,
+          employeeName: entry.employeeName ?? "Unknown",
+          employeeEmail: entry.employeeEmail ?? "",
+          departmentId: entry.departmentId ?? "",
+          date: dateKey,
+          clockIn: null,
+          clockOut: null,
+          pauses: [],
+        };
+      }
+
+      const group = groups[groupKey];
+      switch (entry.type) {
+        case "clock_in":
+          group.clockIn = entry.deviceTs;
+          break;
+        case "clock_out":
+          group.clockOut = entry.deviceTs;
+          break;
+        case "pause_start":
+          group.pauses.push({ start: entry.deviceTs, end: new Date(0) });
+          break;
+        case "pause_end": {
+          const lastPause = group.pauses[group.pauses.length - 1];
+          if (lastPause && lastPause.end.getTime() === 0) {
+            lastPause.end = entry.deviceTs;
+          }
+          break;
+        }
+      }
+    }
+
+    // Calculate overtime for each group
+    const rows = Object.values(groups).map((group) => {
+      let totalHours = 0;
+      let overtimeHours = 0;
+      let morningHours = 0;
+      let afternoonHours = 0;
+
+      if (group.clockIn) {
+        const lastEvent = group.clockOut || new Date();
+        const clockOut = group.clockOut || lastEvent;
+
+        // Calculate morning (clock_in → pause_start)
+        if (group.pauses.length > 0 && group.pauses[0].start.getTime() > 0) {
+          morningHours =
+            (group.pauses[0].start.getTime() - group.clockIn.getTime()) / (1000 * 60 * 60);
+        }
+
+        // Calculate afternoon (pause_end → clock_out)
+        if (group.clockOut && group.pauses.length > 0) {
+          const lastPause = group.pauses[group.pauses.length - 1];
+          if (lastPause.end.getTime() > 0) {
+            afternoonHours =
+              (group.clockOut.getTime() - lastPause.end.getTime()) / (1000 * 60 * 60);
+          }
+        }
+
+        // If no pauses, total is clock_in → clock_out
+        if (group.pauses.length === 0 && group.clockOut) {
+          morningHours =
+            (group.clockOut.getTime() - group.clockIn.getTime()) / (1000 * 60 * 60);
+        }
+
+        totalHours = morningHours + afternoonHours;
+
+        // Apply overtime calculator
+        if (group.clockOut) {
+          const date = new Date(group.date);
+          const dayOfWeek = date.getDay();
+          const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+
+          const validPauses = group.pauses.filter(
+            (p) => p.start.getTime() > 0 && p.end.getTime() > 0,
+          );
+
+          const batch: TimeEntryBatch = {
+            date,
+            clockIn: group.clockIn,
+            clockOut,
+            pauses: validPauses,
+            isWeekend,
+          };
+
+          const result = calculateOvertime(batch, overtimeConfig);
+          overtimeHours = result.overtimeMinutes / 60;
+        }
+      }
+
+      return {
+        date: group.date,
+        employeeName: group.employeeName,
+        employeeEmail: group.employeeEmail,
+        department: group.departmentId,
+        clockIn: group.clockIn?.toISOString() ?? "",
+        clockOut: group.clockOut?.toISOString() ?? "",
+        morningHours: Math.round(morningHours * 100) / 100,
+        afternoonHours: Math.round(afternoonHours * 100) / 100,
+        breakDuration: group.pauses.length > 0
+          ? `${group.pauses
+              .filter((p) => p.end.getTime() > 0)
+              .reduce(
+                (sum, p) => sum + (p.end.getTime() - p.start.getTime()) / (1000 * 60 * 60),
+                0,
+              )
+              .toFixed(1)}h`
+          : "",
+        totalHours: Math.round(totalHours * 100) / 100,
+        overtimeHours: Math.round(overtimeHours * 100) / 100,
+        status: group.clockOut ? "complete" : "incomplete",
+      };
+    });
 
     return NextResponse.json({ rows, count: rows.length });
   } catch (error) {
