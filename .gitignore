@@ -36,7 +36,10 @@ drizzle/
 *.db
 
 # vercel
-.vercel
+.vercel/
+
+# sdd archive (internal docs, not deployable)
+openspec/changes/archive/
 
 # typescript
 *.tsbuildinfo
