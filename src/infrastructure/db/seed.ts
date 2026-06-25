@@ -136,6 +136,113 @@ async function seed() {
 
   console.log(`✓ Created ${totalEntries.length} sample time entries`);
 
+  // ── Leave Types ─────────────────────────────────────────────────────────────
+  console.log("\n📋 Creating leave types...");
+  const leaveTypes = [
+    { name: "Vacaciones", color: "#22c55e", daysPerYear: 20, isPaid: true, requiresApproval: true },
+    { name: "Permiso Médico", color: "#ef4444", daysPerYear: 10, isPaid: true, requiresApproval: true },
+    { name: "Permiso Personal", color: "#3b82f6", daysPerYear: 5, isPaid: false, requiresApproval: true },
+  ];
+
+  const createdLeaveTypes = [];
+  for (const lt of leaveTypes) {
+    const [created] = await db
+      .insert(schema.leaveTypes)
+      .values({
+        companyId: company.id,
+        ...lt,
+      })
+      .returning();
+    createdLeaveTypes.push(created);
+  }
+  console.log(`✓ Created ${leaveTypes.length} leave types`);
+
+  // ── Role Permissions ────────────────────────────────────────────────────────
+  console.log("\n🔐 Creating role permissions...");
+  const rolePermissions = [
+    {
+      role: "employee" as const,
+      canViewTeam: false,
+      canApproveLeave: false,
+      canManageUsers: false,
+      canManageShifts: false,
+      canManageOvertime: false,
+      canViewReports: false,
+      canExportReports: false,
+    },
+    {
+      role: "supervisor" as const,
+      canViewTeam: true,
+      canApproveLeave: true,
+      canManageUsers: false,
+      canManageShifts: false,
+      canManageOvertime: false,
+      canViewReports: true,
+      canExportReports: false,
+    },
+    {
+      role: "admin" as const,
+      canViewTeam: true,
+      canApproveLeave: true,
+      canManageUsers: true,
+      canManageShifts: true,
+      canManageOvertime: true,
+      canViewReports: true,
+      canExportReports: true,
+    },
+  ];
+
+  for (const rp of rolePermissions) {
+    await db.insert(schema.rolePermissions).values({
+      companyId: company.id,
+      ...rp,
+    });
+  }
+  console.log(`✓ Created ${rolePermissions.length} role permissions`);
+
+  // ── Sample Leave Requests ───────────────────────────────────────────────────
+  console.log("\n📝 Creating sample leave requests...");
+  const sampleLeaveRequests = [
+    {
+      employeeId: createdEmployees[2].id, // Empleado García
+      leaveTypeId: createdLeaveTypes[0].id, // Vacaciones
+      startDate: "2026-07-01",
+      endDate: "2026-07-05",
+      reason: "Vacaciones de verano",
+      status: "approved",
+    },
+    {
+      employeeId: createdEmployees[3].id, // Empleado López
+      leaveTypeId: createdLeaveTypes[1].id, // Permiso Médico
+      startDate: "2026-06-20",
+      endDate: "2026-06-20",
+      reason: "Consulta médica",
+      status: "approved",
+    },
+    {
+      employeeId: createdEmployees[2].id, // Empleado García
+      leaveTypeId: createdLeaveTypes[2].id, // Permiso Personal
+      startDate: "2026-06-30",
+      endDate: "2026-06-30",
+      reason: "Trámites personales",
+      status: "pending",
+    },
+  ];
+
+  for (const lr of sampleLeaveRequests) {
+    await db.insert(schema.leaveRequests).values({
+      employeeId: lr.employeeId,
+      leaveTypeId: lr.leaveTypeId,
+      startDate: lr.startDate,
+      endDate: lr.endDate,
+      reason: lr.reason,
+      status: lr.status as "pending" | "approved" | "rejected",
+      approvedBy: lr.status === "approved" ? createdEmployees[0].id : null,
+      approvedAt: lr.status === "approved" ? new Date() : null,
+    });
+  }
+  console.log(`✓ Created ${sampleLeaveRequests.length} sample leave requests`);
+
   console.log("\n═══════════════════════════════════════");
   console.log("  Test Credentials (4-digit PINs):");
   console.log("───────────────────────────────────────");
@@ -148,6 +255,7 @@ async function seed() {
 
   console.log("✅ Seed complete! Run `npm run dev` and log in with any PIN above.");
   console.log("   History page now has sample data for the last 7 days.");
+  console.log("   Leave types and role permissions have been configured.");
 }
 
 seed().catch((err) => {

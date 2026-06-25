@@ -8,6 +8,7 @@ import {
   bigserial,
   jsonb,
   timestamp,
+  date,
   uniqueIndex,
   index,
 } from "drizzle-orm/pg-core";
@@ -143,3 +144,56 @@ export const syncMetadata = pgTable("sync_metadata", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+// ─── Leave Types ─────────────────────────────────────────────────────────────
+export const leaveTypes = pgTable("leave_types", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  color: text("color").notNull().default("#3b82f6"),
+  daysPerYear: integer("days_per_year"),
+  isPaid: boolean("is_paid").default(true).notNull(),
+  requiresApproval: boolean("requires_approval").default(true).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ─── Leave Requests ──────────────────────────────────────────────────────────
+export const leaveRequests = pgTable("leave_requests", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  employeeId: uuid("employee_id")
+    .notNull()
+    .references(() => employees.id, { onDelete: "cascade" }),
+  leaveTypeId: uuid("leave_type_id").references(() => leaveTypes.id, { onDelete: "set null" }),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  reason: text("reason"),
+  status: text("status", { enum: ["pending", "approved", "rejected"] }).default("pending").notNull(),
+  approvedBy: uuid("approved_by").references(() => employees.id),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  rejectionReason: text("rejection_reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ─── Role Permissions ────────────────────────────────────────────────────────
+export const rolePermissions = pgTable(
+  "role_permissions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["employee", "supervisor", "admin"] }).notNull(),
+    canViewTeam: boolean("can_view_team").default(false).notNull(),
+    canApproveLeave: boolean("can_approve_leave").default(false).notNull(),
+    canManageUsers: boolean("can_manage_users").default(false).notNull(),
+    canManageShifts: boolean("can_manage_shifts").default(false).notNull(),
+    canManageOvertime: boolean("can_manage_overtime").default(false).notNull(),
+    canViewReports: boolean("can_view_reports").default(false).notNull(),
+    canExportReports: boolean("can_export_reports").default(false).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    companyRoleIdx: uniqueIndex("idx_role_permissions_company_role").on(table.companyId, table.role),
+  }),
+);

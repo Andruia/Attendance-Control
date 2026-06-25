@@ -12,18 +12,23 @@ import { syncManager } from "@/lib/offline/syncManager";
 const employeeLinks = [
   { href: "/clock", label: "Fichar" },
   { href: "/history", label: "Historial" },
+  { href: "/leave", label: "Permisos" },
 ];
 
 const supervisorLinks = [
   { href: "/clock", label: "Fichar" },
   { href: "/history", label: "Historial" },
   { href: "/team", label: "Equipo" },
+  { href: "/leave", label: "Permisos" },
+  { href: "/leave-approvals", label: "Aprobaciones" },
 ];
 
 const adminLinks = [
   { href: "/clock", label: "Fichar" },
   { href: "/history", label: "Historial" },
   { href: "/team", label: "Equipo" },
+  { href: "/leave", label: "Permisos" },
+  { href: "/leave-approvals", label: "Aprobaciones" },
   { href: "/settings", label: "Config" },
   { href: "/users", label: "Usuarios" },
   { href: "/reports", label: "Reportes" },
